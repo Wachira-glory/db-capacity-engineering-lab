@@ -455,13 +455,43 @@ Capture the control group you'll compare every incident against.
 
 > Rank the four incidents by **blast radius** (threat to overall availability at
 > scale), justified with your measured numbers:
-> 1. ____________________________________________________________________
-> 2. ____________________________________________________________________
-> 3. ____________________________________________________________________
-> 4. ____________________________________________________________________
+> 1. **OPS-2202 (connection pool starvation)** -- the widest blast radius:
+>    every read endpoint shares the same pool, so this doesn't just break
+>    one feature, it can freeze the ENTIRE API under any sufficiently large
+>    burst. Confirmed the DB itself was healthy the whole time (Threads_running
+>    pinned at 2, CPU low) -- the outage was self-inflicted by app-tier
+>    config, the most dangerous kind because it's invisible on DB dashboards.
+> 2. **OPS-2204 (export OOM)** -- second widest: a crash takes down the
+>    WHOLE instance (RestartCount incrementing), not just the slow
+>    endpoint -- "it degrades the whole instance," per the ticket, and we
+>    confirmed exactly that (100% failure across ALL routes during the
+>    crash/restart cycle, not just /export).
+> 3. **OPS-2203 (admit row-lock)** -- serious but contained: only admits to
+>    the SAME hospital serialize; different hospitals and other endpoints
+>    were largely unaffected (contained blast radius even though the
+>    within-radius damage was severe -- 46-98% error rate on that one path).
+> 4. **OPS-2201 (search index/unbounded result)** -- narrowest: only the
+>    search endpoint was affected, other endpoints on the same service
+>    stayed fast throughout (confirmed in the original ticket and our
+>    evidence) -- painful for users but never threatened the whole service.
 >
 > If you could ship only **one** fix before a launch, which and why?
-> ____________________________________________________________________________
+> OPS-2202's connectionLimit/queueLimit fix -- because a burst is the most
+> likely real-world trigger (a marketing push, a shift change, a regional
+> event) and its failure mode is total-API freeze, not a degraded corner.
+> The other three are each bad but bounded to one feature; OPS-2202 is the
+> one that can take the whole platform down from ordinary popularity.
 >
 > For each incident, what alert or dashboard would have caught it in production
-> *before* a user filed a ticket? ____________________________________________
+> *before* a user filed a ticket?
+> - OPS-2201: alert on `http_requests_total` rate falling while
+>   `http_request_duration` p95 spikes, filtered to `/api/patients/search`.
+> - OPS-2202: alert on DB `Threads_running` sustained at the pool's
+>   configured max while app-level throughput stays flat -- the exact
+>   idle-DB-but-stalled-app paradox this ticket describes.
+> - OPS-2203: alert on `sys.innodb_lock_waits` row count sustained above a
+>   small threshold, or on `ER_LOCK_WAIT_TIMEOUT` rate > 0 for more than a
+>   few seconds.
+> - OPS-2204: alert on `nodejs_heap_size_used_bytes` sustained above ~70% of
+>   the container's memory limit, or on GC pause duration trending upward --
+>   both were visible in the GC log minutes before the actual crash.
