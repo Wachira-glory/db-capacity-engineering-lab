@@ -1,6 +1,6 @@
 # 🧾 On-Call Lab Journal — Regional Health
 
-**Engineer:** ______________________  **Date:** ______________________
+**Engineer:** Glory Wachira  **Date:** August 11, 2026
 
 This is your investigation notebook. You are on call for the Regional Health
 platform and working the [incident queue](./incidents/README.md). For each
@@ -54,15 +54,18 @@ Capture the control group you'll compare every incident against.
 
 | Metric              | Value |
 |---------------------|-------|
-| Requests/sec (RPS)  |       |
-| p50 latency         |       |
-| p95 latency         |       |
-| p99 latency         |       |
-| Error rate          |       |
-| Peak API heap used  |       |
+| Requests/sec (RPS)  | 48.3 |
+| p50 latency         | 9.09ms |
+| p95 latency         | 87.99ms |
+| p99 latency         | not reported by k6's default summary (only avg/min/med/max/p90/p95) |
+| Error rate          | 0.00% |
+| Peak API heap used  | 95.7 MB (RSS, from Grafana "API memory vs container limit" panel) |
 
 > SLOs you'll hold the incidents to (target p95, max error rate, RPS floor):
-> ____________________________________________________________________________
+> p95 < 200ms, error rate < 1%, RPS floor ~45 req/s -- matches the thresholds
+> already asserted in `00-baseline.js`.
+
+![baseline](./evidence/baseline.png)
 
 ---
 
