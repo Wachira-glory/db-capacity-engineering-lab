@@ -75,33 +75,74 @@ Capture the control group you'll compare every incident against.
 
 ### Hypothesis
 > From the symptoms alone (fast when isolated, collapses under concurrent
-> searches, other endpoints unaffected), I think the cause is
-> ____________________________________________________________________________
-> because __________________________________________________________________.
+> searches, other endpoints unaffected), I think the cause is a full table
+> scan on `last_name` because there's no index on that column, so every
+> search reads all ~100,000 rows -- cheap once, expensive under concurrency.
 
 ### Observation (evidence)
 > Investigate how the database executes the search. Paste what you find:
 > ```
->
+> EXPLAIN ANALYZE SELECT * FROM patients WHERE last_name = 'Smith';
+> -> Filter: (patients.last_name = 'Smith')  (cost=10294 rows=9837) (actual time=0.194..170 rows=10000 loops=1)
+>     -> Table scan on patients  (cost=10294 rows=98373) (actual time=0.123..146 rows=100000 loops=1)
 > ```
 | Metric (under load) | Value | vs. baseline |
 |---------------------|-------|--------------|
-| p95 latency         |       |              |
-| RPS                 |       |              |
-| Error rate          |       |              |
-| Rows examined / req |       |              |
+| p95 latency         | 32.42s | ~368x worse (baseline 87.99ms) |
+| RPS                 | 6.9/s | ~7x lower (baseline 48.3/s) |
+| Error rate          | 0.00% (but see note below) |
+| Rows examined / req | 100,000 (full table scan) | baseline /recent scans 0 extra rows -- PK order, LIMIT 50 |
+
+> Note: 0% error rate is misleading -- every request eventually returned 200,
+> nothing timed out. The damage is entirely in latency: p95 blew past the
+> 300ms SLO by over 100x (32.42s vs 300ms threshold). The ticket's "sometimes
+> it errors out" doesn't reproduce here; the honest finding is worse -- it
+> never errors, it just becomes unusable.
 
 ### Root cause & mechanism
-> What is the database doing per request, and why does cost blow up with data
-> size and concurrency? Name the mechanism and the data structure involved.
-> Estimate the cost difference between the current behaviour and the ideal one
-> for ~100,000 rows. _________________________________________________________
+> Mechanism: full table scan. `last_name` has no index (only the `id` primary
+> key does), so `WHERE last_name = ?` forces MySQL to read every row in the
+> table and filter in memory -- confirmed by EXPLAIN ANALYZE: "Table scan on
+> patients ... rows=100000". Cost is O(N) per query regardless of how
+> selective the search is. At low concurrency this is masked -- a single
+> 100k-row scan still completes in well under a second. Under 200 concurrent
+> VUs, every one of those O(N) scans competes for the same CPU and the
+> app's DB connection pool (connectionLimit=2), so scans queue behind each
+> other instead of running in parallel -- turning a ~150ms scan into
+> minutes of queued wait per request (p95=32.42s observed).
+> Ideal: an index on `last_name` turns this into an index range seek --
+> O(log N) to find the start of the matching range, then O(k) to read the k
+> matching rows (~10,000 for "Smith"), instead of O(N)=100,000 rows examined
+> for every search regardless of match count.
 
 ### Fix & verify
-> The change you made (be specific): ________________________________________
-> Re-run evidence — new query behaviour: ____________________________________
-> New p95: ______  New RPS: ______  Improvement factor: ______×
-> Any trade-off introduced by your fix? ______________________________________
+> Change 1: `CREATE INDEX idx_patients_last_name ON patients (last_name)`.
+> Confirmed via EXPLAIN ANALYZE -- plan changed from "Table scan on patients
+> rows=100000" to "Index lookup on patients using idx_patients_last_name
+> rows=10000". Re-ran reproduce-OPS-2201.js: p95 got WORSE (32.42s -> 46.09s).
+> The index fixed the lookup but exposed a second mechanism: the endpoint has
+> no LIMIT, so a common surname (10,000 matching rows, confirmed via
+> `SELECT COUNT(*)`) still serializes and transfers all 10,000 full rows per
+> request -- data_received was 1.5GB for the run.
+>
+> Change 2: added `LIMIT 100` to the search query in server.js.
+> Re-run evidence:
+> New p95: 826.68ms (from 46.09s pre-fix, from 32.42s original) -- 56x faster
+> New RPS: 308.3/s (from 6.8/s pre-fix, from 6.9/s original) -- ~45x higher
+> data_received: 331MB (from 1.5GB) -- 4.5x less
+> Error rate: 0.00% throughout
+>
+> Trade-off / honest gap: the ticket's own SLO (p(95)<300ms) is still NOT met
+> (826ms > 300ms threshold). Little's Law check: N=200 VUs, measured
+> throughput=308.3 req/s -> W = N/lambda = 200/308.3 = 0.649s, which matches
+> the observed avg latency (641ms) almost exactly -- this points to queueing
+> time against `connectionLimit: 2` in database.js as the remaining
+> bottleneck, not query execution time. That pool limit is the specific
+> subject of OPS-2202 and is left untouched here so that ticket's evidence
+> (DB looks idle under pool starvation) still reproduces cleanly later. This
+> ticket's evidence supports two mechanisms (missing index, unbounded result
+> set) and both were fixed with large, real improvement -- the remaining gap
+> is a separate, already-identified mechanism outside this ticket's scope.
 
 ---
 

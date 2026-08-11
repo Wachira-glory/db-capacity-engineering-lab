@@ -99,8 +99,12 @@ app.get('/api/patients/search', async (req, res) => {
   const lastName = req.query.lastName || '';
   try {
     const pool = getPool();
+    // OPS-2201 fix: the index (idx_patients_last_name) fixed the lookup, but
+    // common surnames still match thousands of rows with no cap, so every
+    // search serialized and transferred the entire match set. Cap results --
+    // no user needs 10,000 rows rendered for one search.
     const [rows] = await pool.query(
-      'SELECT * FROM patients WHERE last_name = ?',
+      'SELECT * FROM patients WHERE last_name = ? LIMIT 100',
       [lastName]
     );
     res.json({ count: rows.length, lastName, data: rows });
