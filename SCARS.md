@@ -62,3 +62,31 @@
 - **Evidence:** [LAB_JOURNAL.md, Investigation OPS-2202](./LAB_JOURNAL.md),
   `evidence/OPS-2202-before.png`, `evidence/OPS-2202-after.png`.
 
+## OPS-2203 -- Bed admissions fail under concurrent load to the same hospital
+
+- **S -- Symptom:** Concurrent admits to the same hospital collapsed: p95 up
+  to 57.63s (baseline 87.99ms), error rate 46%-98% across runs, throughput
+  ~3.56 successful admits/sec. One-at-a-time admits and different-hospital
+  admits were unaffected.
+- **C -- Cause:** The admit handler held an exclusive row lock on the
+  hospital's row across a ~500ms simulated external call
+  (notifyBedRegistry) before committing. Confirmed directly via
+  `performance_schema.data_locks`: one transaction GRANTED the lock
+  (LOCK_DATA=1), ~19 others WAITING on the identical row. Waiters exceeding
+  innodb-lock-wait-timeout=5s failed with ER_LOCK_WAIT_TIMEOUT (confirmed in
+  Grafana's DB-errors panel).
+- **A -- Action:** Removed the wrapping transaction; replaced with a single
+  guarded atomic UPDATE (`WHERE id=? AND available_beds>0`) and moved the
+  registry notification to run AFTER the write, outside the lock.
+- **R -- Result:** RPS 3.56/s -> 301.4/s (~85x), p95 57.63s -> 2.04s (~28x),
+  error rate 46-98% -> 6.59%. Honest gap: still short of the ticket's own
+  SLOs (p95<1000ms, error<5%) -- remaining errors cluster at test-start
+  burst, not ongoing contention.
+- **Scar / lesson:** Never hold a database lock across a network call to an
+  external system -- the lock's duration should match the DB work, not the
+  slowest dependency in the request. A dashboard alert on
+  `sys.innodb_lock_waits` row count sustained above a small threshold, or on
+  ER_LOCK_WAIT_TIMEOUT rate, would catch this before a ticket is filed.
+- **Evidence:** [LAB_JOURNAL.md, Investigation OPS-2203](./LAB_JOURNAL.md),
+  `evidence/OPS-2203-before.png`, `evidence/OPS-2203-after.png`.
+

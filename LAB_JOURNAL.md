@@ -263,33 +263,77 @@ Capture the control group you'll compare every incident against.
 > While the reproduction runs, inspect concurrent writers to one row:
 > ```sql
 > SELECT * FROM performance_schema.data_locks\G
-> SELECT * FROM sys.innodb_lock_waits\G
-> SHOW ENGINE INNODB STATUS\G   -- TRANSACTIONS section
 > ```
-> Paste the most telling waiter/blocker rows and the failure signature you saw
-> (a DB error + code, a timeout, or stalled/near-zero throughput):
+> Direct proof of serialization: transaction 3240 holds the lock GRANTED --
+> LOCK_TYPE: RECORD, LOCK_MODE: X,REC_NOT_GAP, INDEX_NAME: PRIMARY,
+> LOCK_DATA: 1 (hospital id=1's primary key row). Every other concurrent
+> transaction (3251, 3253, 3255, 3257, 3259, 3261, 3263, 3265, 3267, 3269,
+> 3270-3278) shows the identical LOCK_DATA: 1 with LOCK_STATUS: WAITING --
+> ~19 transactions queued behind one exclusive row lock at the moment of
+> capture. Grafana's "DB errors by code" panel independently confirms the
+> mechanism: ER_LOCK_WAIT_TIMEOUT spiking to ~30 during the surge.
 > ```
->
+> ENGINE_TRANSACTION_ID: 3240  LOCK_STATUS: GRANTED   LOCK_DATA: 1
+> ENGINE_TRANSACTION_ID: 3251  LOCK_STATUS: WAITING   LOCK_DATA: 1
+> ENGINE_TRANSACTION_ID: 3253  LOCK_STATUS: WAITING   LOCK_DATA: 1
+> ... (17 more transactions, all WAITING on LOCK_DATA: 1)
 > ```
 | Metric                     | Value | vs. baseline |
 |----------------------------|-------|--------------|
-| p95 / p99 latency          |       |              |
-| Max successful admits/sec  |       |              |
-| DB error(s) + code         |       |              |
-| Error rate                 |       |              |
+| p95 / p99 latency          | Run 1: p95=57.63s. Run 2: successful reqs p95=23.43ms, but failed reqs averaged 35.45s before erroring | baseline p95=87.99ms -- catastrophically worse |
+| Max successful admits/sec  | ~3.56/s (run 1); ~1.6/s successful (run 2, 96 successes over 60s) | baseline RPS=48.3/s |
+| DB error(s) + code         | ER_LOCK_WAIT_TIMEOUT (confirmed in Grafana DB-errors panel) | none at baseline |
+| Error rate                 | 46.26% (run 1), 97.67% (run 2 -- more transactions piled up before capture) | 0% at baseline |
 
 ### Root cause & mechanism
-> Explain why concurrency cannot beat serialization on a single hot row. If the
-> critical section is held for W seconds per admit, what is the theoretical max
-> throughput for that one row, regardless of how many callers pile on?
-> 1 / W = ______ admits/sec. Where does the time in the critical section go, and
-> which of the transactional guarantees is enforcing the wait? ________________
+> Mechanism: the admit handler (server.js) opens a transaction, runs
+> `UPDATE hospitals SET available_beds = available_beds - 1 WHERE id = ?`
+> (which takes an exclusive row lock on that hospital's row), then AWAITS a
+> ~500ms simulated external call (notifyBedRegistry) BEFORE committing --
+> holding the exclusive lock the entire time. InnoDB's isolation guarantees
+> (specifically: an UPDATE's row-level exclusive lock is held until
+> commit/rollback) force every other transaction targeting the same row to
+> wait for the lock to release. Confirmed directly via
+> performance_schema.data_locks: transaction 3240 GRANTED on LOCK_DATA=1,
+> ~19 others WAITING on the identical row. Different hospitals don't
+> contend because each has a distinct primary-key row -- separate locks.
+>
+> Critical section duration W ~= 500ms+ (the notify call, plus the UPDATE and
+> commit overhead). Theoretical max throughput for ONE hot row, regardless of
+> how many callers pile on: 1/W = 1/0.5 ~= 2 admits/sec. Observed successful
+> throughput (3.56/s, 1.6/s across two runs) is in the same order of
+> magnitude as this ceiling -- concurrency past that doesn't raise
+> throughput, it only adds waiters, and once a waiter exceeds
+> innodb-lock-wait-timeout=5s (docker-compose.yml), it's killed with
+> ER_LOCK_WAIT_TIMEOUT instead of continuing to wait. This is exactly why
+> one-at-a-time admits work fine (no contention, no wait) but concurrent
+> admits to the SAME hospital collapse (all serialize behind one lock),
+> while different hospitals interfere far less (separate rows, separate
+> locks, no shared critical section).
 
 ### Fix & verify
-> The change you made (consider: shrinking the critical section, moving slow
-> work out of the transaction, atomic guarded updates, reducing contention on
-> the hot row): _____________________________________________________________
-> Re-measured throughput / error rate: ______________________________________
+> Change: removed the explicit transaction; replaced with a single guarded
+> atomic UPDATE (`... WHERE id = ? AND available_beds > 0`, one statement is
+> already atomic in MySQL). Moved notifyBedRegistry() to run AFTER the
+> response/lock release (fire-and-forget), instead of inside the critical
+> section. This drops the row-lock hold time from ~500ms to single-digit ms.
+>
+> Re-run evidence (same reproduce-OPS-2203.js):
+> New RPS: 301.4/s (from ~3.56/s -- ~85x)
+> New p95: 2.04s (from 57.63s -- ~28x)
+> New error rate: 6.59% (from 46.26%-97.67% across runs)
+>
+> Trade-off / honest gap: still short of the ticket's own SLOs (p95<1000ms,
+> error rate<5%) -- close but not fully green. The remaining errors cluster
+> almost entirely at t=0 (a dense burst of EOF warnings when all 500 VUs
+> fire near-simultaneously at test start), consistent with a brief startup
+> saturation rather than ongoing lock contention -- the steady-state
+> behavior after that initial burst is clean. Also removed the wrapping
+> transaction's rollback safety net; the guarded WHERE clause is the
+> substitute correctness check (won't decrement below 0 beds), which is
+> arguably safer than the original for the specific failure mode of
+> double-booking, at the cost of the registry notification now being
+> fire-and-forget rather than guaranteed-consistent with the DB write.
 
 ---
 

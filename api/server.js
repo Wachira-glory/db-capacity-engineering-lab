@@ -119,33 +119,38 @@ app.get('/api/patients/search', async (req, res) => {
 // We update the bed count, then notify the regional bed registry that the
 // count changed before finalizing, so the two systems stay consistent.
 // ---------------------------------------------------------------------------
+// OPS-2203 fix: the row lock was held across notifyBedRegistry's ~500ms
+// call, serializing every concurrent admit to the same hospital and pushing
+// waiters past innodb-lock-wait-timeout=5s (ER_LOCK_WAIT_TIMEOUT). Fix:
+// commit the DB change immediately with a single guarded atomic UPDATE (no
+// explicit transaction needed -- one statement is already atomic), then
+// notify the registry AFTER the lock is released. This shrinks the critical
+// section from ~500ms to single-digit ms.
 app.post('/api/hospitals/:id/admit', async (req, res) => {
   const hospitalId = Number(req.params.id);
   const pool = getPool();
-  let conn;
   try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    await conn.query(
-      'UPDATE hospitals SET available_beds = available_beds - 1 WHERE id = ?',
+    const [result] = await pool.query(
+      'UPDATE hospitals SET available_beds = available_beds - 1 WHERE id = ? AND available_beds > 0',
       [hospitalId]
     );
 
-    // Notify the external regional bed registry of the new count before we
-    // commit (simulated here with a network round-trip latency).
-    await notifyBedRegistry(hospitalId);
+    if (result.affectedRows === 0) {
+      return res.status(409).json({ error: 'NO_BEDS_AVAILABLE', hospitalId });
+    }
 
-    await conn.commit();
+    // Notify the external registry AFTER the row lock is released -- a
+    // slow downstream call should never hold a database lock. Production:
+    // an outbox table + retry worker instead of fire-and-forget.
+    notifyBedRegistry(hospitalId).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('bed registry notify failed', hospitalId, err);
+    });
+
     res.json({ status: 'admitted', hospitalId });
   } catch (err) {
-    if (conn) {
-      try { await conn.rollback(); } catch (_) { /* ignore */ }
-    }
     dbErrorsTotal.inc({ route: '/api/hospitals/:id/admit', code: err.code || 'UNKNOWN' });
     res.status(500).json({ error: err.code || 'ERROR', message: err.message });
-  } finally {
-    if (conn) conn.release();
   }
 });
 
