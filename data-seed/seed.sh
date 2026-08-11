@@ -50,6 +50,12 @@ CREATE TABLE patients (
   created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- Fix for OPS-2201: last_name had no index, forcing a full table scan on
+-- every search (confirmed via EXPLAIN ANALYZE). Under shift-change
+-- concurrency, scans queued behind the small connection pool, pushing
+-- p95 to 32.42s. Index turns this into a direct lookup.
+CREATE INDEX idx_patients_last_name ON patients (last_name);
+
 CREATE TABLE hospitals (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   name           VARCHAR(128) NOT NULL,

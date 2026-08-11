@@ -127,9 +127,13 @@ Capture the control group you'll compare every incident against.
 >
 > Change 2: added `LIMIT 100` to the search query in server.js.
 > Re-run evidence:
-> New p95: 826.68ms (from 46.09s pre-fix, from 32.42s original) -- 56x faster
-> New RPS: 308.3/s (from 6.8/s pre-fix, from 6.9/s original) -- ~45x higher
-> data_received: 331MB (from 1.5GB) -- 4.5x less
+> New p95: 722.75ms (confirming re-run; earlier run showed 826.68ms) -- both
+> from 46.09s pre-fix, from 32.42s original -- ~45-56x faster
+> New RPS: 343.7/s (confirming re-run; earlier run showed 308.3/s) -- from
+> 6.8/s pre-fix, from 6.9/s original -- ~45-50x higher
+> data_received: 367MB / 331MB across the two confirming runs (from 1.5GB) -- ~4.5x less
+>
+> Evidence: ![before](./evidence/OPS-2201-before.png) ![after](./evidence/OPS-2201-after.png)
 > Error rate: 0.00% throughout
 >
 > Trade-off / honest gap: the ticket's own SLO (p(95)<300ms) is still NOT met
