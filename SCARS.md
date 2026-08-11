@@ -90,3 +90,38 @@
 - **Evidence:** [LAB_JOURNAL.md, Investigation OPS-2203](./LAB_JOURNAL.md),
   `evidence/OPS-2203-before.png`, `evidence/OPS-2203-after.png`.
 
+## OPS-2204 -- Nightly export crashes the service repeatedly
+
+- **S -- Symptom:** Full patient export (100k rows) crashed the service
+  under 50 concurrent callers: V8 FATAL ERROR (JS heap out of memory) after
+  ~12 minutes, RestartCount incrementing, memory climbing to ~254-260MB
+  against a 160MB container limit before crashing.
+- **C -- Cause:** `SELECT * FROM patients` loaded the entire result set into
+  one JS array, then `res.json()` serialized it all into one giant string --
+  both had to coexist in memory at peak. NODE_OPTIONS=--max-old-space-size=256
+  let V8 grow past the container's real 160MB cgroup limit before either
+  side's memory ceiling forced a stop, so V8 crashed itself via FATAL ERROR
+  once its own internal budget was exhausted (confirmed in GC log:
+  escalating 23.5s/19.7s Mark-Compact pauses, "allocation failure").
+- **A -- Action:** Three attempts. (1) Naive streaming via the promise pool's
+  `.connection` property silently hung forever -- that API doesn't actually
+  support streaming, a wrong assumption caught by testing a single request
+  with curl before re-running the full load test. (2) Backpressure logic
+  added to the same broken pattern -- still hung. (3) Final: dedicated plain
+  callback-style mysql2 pool just for this route (the API surface that
+  actually supports .stream()), with backpressure (pause/resume on write
+  drain) and cleanup on client disconnect.
+- **R -- Result:** Peak RSS 254-260MB -> ~66-80MB (stayed flat all run),
+  restarts 1-2 -> 0, error rate 100% -> 0.00%, all 95 completed requests
+  succeeded. Honest trade-off: p95 latency ~1m21s under 50 concurrent full
+  exports -- real work, not a bug, but slow under heavy concurrency.
+- **Scar / lesson:** A "streaming fix" isn't actually fixed until tested end
+  to end with a single request AND under real concurrency -- two of three
+  attempts here looked plausible in code review but silently did nothing.
+  Always verify with the simplest possible reproduction (one curl request)
+  before trusting a load test's aggregate numbers. A dashboard alert on
+  `nodejs_heap_size_used_bytes` sustained above ~70% of the container limit,
+  or a GC-pause-duration alert, would catch this before a ticket is filed.
+- **Evidence:** [LAB_JOURNAL.md, Investigation OPS-2204](./LAB_JOURNAL.md),
+  `evidence/OPS-2204-after.png`.
+

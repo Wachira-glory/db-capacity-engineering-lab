@@ -7,6 +7,7 @@
  */
 
 const mysql = require('mysql2/promise');
+const mysqlCallback = require('mysql2');
 const { MongoClient } = require('mongodb');
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,19 @@ function getPool() {
   return pool;
 }
 
+// OPS-2204: mysql2's promise-wrapped pool does not expose .stream() -- there
+// is no reliable way to reach the underlying callback connection through it.
+// Streaming requires the plain callback-style mysql2 API, so we keep a
+// separate small pool just for that.
+let streamPool;
+
+function getStreamPool() {
+  if (!streamPool) {
+    streamPool = mysqlCallback.createPool({ ...MYSQL_CONFIG, connectionLimit: 5 });
+  }
+  return streamPool;
+}
+
 // ---------------------------------------------------------------------------
 // MongoDB client (singleton, lazily connected)
 // ---------------------------------------------------------------------------
@@ -104,6 +118,7 @@ module.exports = {
   MONGO_URI,
   MONGO_DB_NAME,
   getPool,
+  getStreamPool,
   getMongo,
   closeAll,
 };

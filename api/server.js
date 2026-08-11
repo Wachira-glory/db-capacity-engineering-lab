@@ -16,7 +16,7 @@
 
 const express = require('express');
 const client = require('prom-client');
-const { getPool, getMongo } = require('./database');
+const { getPool, getStreamPool, getMongo } = require('./database');
 
 const app = express();
 app.use(express.json());
@@ -162,15 +162,66 @@ function notifyBedRegistry(_hospitalId) {
 // ---------------------------------------------------------------------------
 // Full patient export for the analytics/ETL team.
 // ---------------------------------------------------------------------------
-app.get('/api/patients/export', async (_req, res) => {
-  try {
-    const pool = getPool();
-    const [rows] = await pool.query('SELECT * FROM patients');
-    res.json({ count: rows.length, data: rows });
-  } catch (err) {
+// OPS-2204 fix: SELECT * loaded all 100,000 rows into one JS array, then
+// res.json() serialized the whole thing into one giant string -- both had
+// to coexist in memory at peak (~254-260MB, confirmed via GC log), blowing
+// past the container's 160MB budget and V8's own --max-old-space-size=256
+// ceiling (FATAL ERROR: JavaScript heap out of memory). Fix: stream rows to
+// the response as NDJSON as they arrive from MySQL, so memory stays O(1)
+// (one row's worth) regardless of table size or concurrent callers.
+// OPS-2204 fix, revised: initial streaming attempt still OOM'd (confirmed
+// via docker stats: memory hit 159.9/160MiB right at the cgroup limit) --
+// res.write() was called without checking its return value, so when a
+// client's TCP receive buffer filled up (res.write() returns false), the
+// MySQL row stream kept flowing and Node's internal write buffer grew
+// unbounded per response. With 50 concurrent exports, that's 50 unbounded
+// buffers -- same O(N) problem via a different path. Fix: pause the MySQL
+// row stream when res.write() signals backpressure (returns false), resume
+// on the response's 'drain' event. This caps in-flight memory to roughly
+// one MySQL read-buffer's worth per connection, regardless of how slow the
+// client is or how many concurrent exports are running.
+// OPS-2204 fix, corrected: the promise-wrapped pool has no working .stream()
+// path -- attempting to reach it via .connection silently hung forever with
+// zero bytes sent and no error (confirmed: 60s curl timeout, empty logs).
+// mysql2's streaming API only works on the plain callback-style pool, so we
+// use a dedicated small pool (getStreamPool) just for this route, with
+// backpressure handling (pause/resume on write drain) to keep memory O(1)
+// regardless of table size or concurrent callers.
+app.get('/api/patients/export', (_req, res) => {
+  // eslint-disable-next-line no-console
+  console.log('export request received');
+  const streamPool = getStreamPool();
+  res.setHeader('Content-Type', 'application/x-ndjson');
+
+  const dbStream = streamPool.query('SELECT * FROM patients').stream({ highWaterMark: 200 });
+
+  // If the client disconnects mid-stream (e.g. a cancelled request or a
+  // timed-out k6 VU), destroy the DB stream so its connection returns to
+  // the pool instead of staying checked out indefinitely.
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      dbStream.destroy();
+    }
+  });
+
+  dbStream.on('data', (row) => {
+    const ok = res.write(JSON.stringify(row) + '\n');
+    if (!ok) {
+      dbStream.pause();
+      res.once('drain', () => dbStream.resume());
+    }
+  });
+
+  dbStream.on('end', () => res.end());
+
+  dbStream.on('error', (err) => {
     dbErrorsTotal.inc({ route: '/api/patients/export', code: err.code || 'UNKNOWN' });
-    res.status(500).json({ error: err.code || 'ERROR', message: err.message });
-  }
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.code || 'ERROR', message: err.message });
+    } else {
+      res.end();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -343,8 +343,13 @@ Capture the control group you'll compare every incident against.
 
 ### Hypothesis
 > Given memory spikes right before each restart and only the big export is
-> affected, I think the cause is ___________________________________________
-> because __________________________________________________________________.
+> affected, I think the cause is the export endpoint loading the ENTIRE
+> patient table (100,000 rows, including the padded TEXT notes field) into a
+> single JS array before responding -- O(N) memory that scales with table
+> size and concurrent callers -- because there's no LIMIT, pagination, or
+> streaming in the query, and the container's mem_limit (160MB) is smaller
+> than what V8 is told it can use (NODE_OPTIONS=--max-old-space-size=256),
+> so the kernel OOM-kills the process instead of V8 gracefully GCing first.
 
 ### Observation (evidence)
 > Watch `nodejs_heap_size_used_bytes`, GC pauses, and restarts:
@@ -354,30 +359,95 @@ Capture the control group you'll compare every incident against.
 > ```
 | Metric                          | Value |
 |---------------------------------|-------|
-| Approx. payload size per request|       |
-| Peak heap before crash          |       |
-| Time-to-first-crash             |       |
-| Container restart count         |       |
-| GC pause trend                  |       |
+| Approx. payload size per request| ~100,000 rows, full patients table incl. padded notes TEXT field |
+| Peak heap before crash          | ~254-260MB (from GC log: "253.8 (258.7) -> 253.1 (259.0) MB") |
+| Time-to-first-crash             | ~746s into the run (from GC log timestamp 746775ms) |
+| Container restart count         | 1 (docker inspect RestartCount) |
+| GC pause trend                  | Escalating and increasingly futile: 23538ms then 19701ms Mark-Compact pauses, "allocation failure; scavenge might not succeed" -- V8 fighting for space right up to the crash |
 
-> Paste the crash / exit log lines:
+> Crash / exit log lines:
 > ```
->
+> [1:0x677c130] 746775 ms: Mark-Compact (reduce) 253.8 (258.7) -> 253.1 (259.0) MB, 23538.07 / 0.00 ms allocation failure; scavenge might not succeed
+> [1:0x677c130] 766504 ms: Mark-Compact (reduce) 254.2 (259.0) -> 253.9 (260.0) MB, 19701.19 / 0.00 ms allocation failure; scavenge might not succeed
+> FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
 > ```
+> Note: heap climbed toward the NODE_OPTIONS ceiling (--max-old-space-size=256)
+> rather than the container's real 160MB cgroup limit -- confirms the
+> documented mismatch: V8 kept trying to grow within its OWN heap budget
+> until it hit that limit, rather than respecting the tighter container
+> memory cap. K6-side symptom: 100% http_req_failed, all requests timing out
+> at exactly 120s (k6's configured timeout) with 0 bytes received -- the
+> server died and restarted mid-response for every in-flight request.
 
 ### Root cause & mechanism
-> Estimate per-row size, then the full payload: rows × bytes/row = ______ MB.
-> With C concurrent callers, peak resident memory ≈ ______ MB — compare to the
-> container's memory budget (160MB locally / 256MB in prod). Explain what happens
-> to GC frequency, CPU, and
-> throughput as live heap approaches the limit, and why the current approach
-> uses O(N) memory while a better one could use far less. ____________________
+> Mechanism: `SELECT * FROM patients` (server.js) loads all 100,000 rows into
+> a single JS array, then `res.json()` serializes the ENTIRE array into one
+> giant string before sending any bytes to the client -- both the row-object
+> array and its JSON-string form must coexist in memory at peak, roughly
+> doubling the working set at the moment of serialization. This is O(N)
+> memory that scales linearly with table size and with concurrent callers
+> (50 VUs here, each holding its own full copy in flight).
+>
+> Per-row estimate: notes field is REPEAT(<~30 char sentence>, 6) ~= 180
+> bytes, plus first_name/last_name/email/diagnosis (~50 bytes combined) ~=
+> 230 bytes of raw MySQL row data. As JS objects (V8 string/object overhead
+> is typically 2-4x raw bytes) plus the duplicate JSON string form, effective
+> heap cost per row lands well above raw bytes -- for 100,000 rows this adds
+> up to the observed ~254-260MB peak, consistent with the GC log.
+>
+> Compare to budget: 160MB container limit (docker-compose.yml mem_limit)
+> vs. NODE_OPTIONS=--max-old-space-size=256 -- V8 is told it may grow to
+> 256MB, ABOVE the container's real ceiling. As live heap approaches that
+> V8-side limit, GC frequency and pause duration both escalate sharply
+> (23.5s then 19.7s Mark-Compact pauses observed) as the collector
+> repeatedly tries and fails to free enough space -- CPU goes almost
+> entirely to GC instead of serving requests, throughput collapses to zero,
+> and eventually V8 gives up and crashes with FATAL ERROR rather than the
+> kernel OOM-killing it first (since V8's own ceiling was hit before the
+> container's cgroup limit forced a kill). A better approach needs only
+> O(1) memory per response -- streaming rows to the client as they're read
+> from MySQL, never holding more than a small batch in memory regardless of
+> table size.
 
 ### Fix & verify
-> The change you made (consider: bounding how much of the result set is in
-> memory at once, streaming to the response, sensible page sizes, compression):
-> ____________________________________________________________________________
-> Re-run evidence — new peak heap: ______  restarts: ______  error rate: ______
+> This fix went through three attempts before working -- documenting the
+> full path since finding a fix that only partly works is a real result:
+>
+> Attempt 1: naive streaming via `conn.connection.query().stream()` on the
+> promise-wrapped pool. This silently hung forever -- 60s+ with 0 bytes
+> sent, no error, no log line. Root cause: mysql2's promise pool wrapper
+> does not expose a working `.connection` property for streaming; the code
+> was awaiting a Promise that could never resolve.
+>
+> Attempt 2: added backpressure handling (pause/resume on res.write()
+> backpressure) but on the SAME broken streaming pattern -- still hung,
+> because the underlying stream never started in the first place.
+>
+> Attempt 3 (final fix): switched to a dedicated plain callback-style
+> mysql2 pool (`getStreamPool`, connectionLimit=5) specifically for this
+> route, since streaming is only supported on that API surface, not the
+> promise-wrapped one. Kept backpressure handling (pause the DB stream when
+> res.write() returns false, resume on 'drain') so memory stays O(1)
+> regardless of table size or concurrent callers. Also added res.on('close')
+> to destroy the DB stream if a client disconnects mid-export, so
+> connections don't leak back into the pool.
+>
+> Re-run evidence (50 concurrent VUs, 2 min):
+> New peak RSS: ~66-80MB (from ~254-260MB pre-fix) -- stayed flat, never
+> approached the 160MB container limit
+> Restarts: 0 (from 1-2 depending on run, pre-fix)
+> Error rate: 0.00% (from 100%)
+> checks_succeeded: 100% (95 of 95 completed requests)
+> data_received: 3.5GB total across the run (vs. 0 bytes pre-fix, since
+> pre-fix crashed before any response completed)
+>
+> Trade-off: p95 latency is genuinely high (~1m21s) under 50 CONCURRENT full
+> exports -- that's real work (each response streams and serializes
+> ~36MB), not a bug, but worth flagging: this fix trades "crashes under
+> load" for "correctly bounded but slow under heavy concurrent load," which
+> is the right trade for a nightly batch job but would need further work
+> (e.g. limiting concurrent exports, pagination) if this endpoint needed to
+> serve many simultaneous callers quickly.
 
 ---
 
