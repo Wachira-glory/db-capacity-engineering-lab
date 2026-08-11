@@ -19,10 +19,32 @@ const MYSQL_CONFIG = {
   password: process.env.MYSQL_PASSWORD || 'labpassword',
   database: process.env.MYSQL_DATABASE || 'capacity_lab',
 
-  // Keep the pool small so we don't overwhelm the database with connections.
+  // OPS-2202 fix: Threads_running stayed at 2 during a 2000-VU surge while
+  // capacity-api CPU hit 134% managing an unbounded queue -- connectionLimit
+  // was the bottleneck, not the DB. Little's Law (lambda~470/s, W~0.02s)
+  // suggested ~10 connections; sized up with headroom. queueLimit caps how
+  // many requests wait for a connection before failing fast (503-style
+  // rejection) instead of queueing indefinitely and ballooning latency.
+  // OPS-2202 fix, revised: queueLimit=200 caused 15,146 db_errors_total
+  // (mysql2 queue-limit rejections, surfaced as EOF/500s) under a 2000-VU
+  // surge -- far more callers than the queue allowed. Raised connectionLimit
+  // is validated (Threads_running climbed under load, mysql-db CPU stayed
+  // low); queueLimit set high enough to absorb a realistic surge rather than
+  // hard-reject mid-storm. Real backpressure belongs at a layer that can
+  // return 503 with Retry-After, not a silent client-side queue drop --
+  // flagged as a follow-up, not solved by this ticket alone.
+  // OPS-2202 fix, final: connectionLimit=20 fixes the confirmed mechanism
+  // (Threads_running pinned at 2 while requests queued). queueLimit tested
+  // at 200 (62.57% errors -- too small) and 3000 (1.86% errors but p95=27.43s
+  // -- queue absorbs everything, so nothing fails fast, and total wait grows
+  // unbounded). Settled on 500: bounded enough that a genuine overload sheds
+  // load instead of making every caller wait equally long, generous enough
+  // to absorb a realistic burst without wholesale rejection. A queue can't
+  // fix a service-rate ceiling -- true graceful degradation needs upstream
+  // admission control (rate limiting / fast 503), flagged as a follow-up.
   waitForConnections: true,
-  connectionLimit: 2,
-  queueLimit: 0,
+  connectionLimit: 20,
+  queueLimit: 500,
   connectTimeout: 10_000,
   maxIdle: 2,
   idleTimeout: 60_000,

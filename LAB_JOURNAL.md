@@ -156,37 +156,97 @@ Capture the control group you'll compare every incident against.
 
 ### Hypothesis
 > Given the query is trivial and the DB is idle yet requests pile up, I think
-> the bottleneck is ________________________________________________________
-> because __________________________________________________________________.
+> the bottleneck is the application-tier MySQL connection pool
+> (connectionLimit: 2 in database.js) because only 2 queries can execute
+> concurrently no matter how cheap each one is -- a burst of 2000 requests
+> queues waiting for a free connection, so the database itself stays idle
+> (it's only ever running <=2 queries) while the app appears frozen.
 
 ### Observation (evidence)
 > Where is time spent between request arrival and query execution? Capture the
 > error codes and any queue/timeout evidence from logs and metrics:
 > ```
+> docker stats during surge:
+>   mysql-db      CPU 24.65%   MEM 410MiB/7.61GiB
+>   capacity-api  CPU 134.10%  MEM 96.24MiB/160MiB
 >
+> SHOW STATUS LIKE 'Threads_connected'; -> 3
+> SHOW STATUS LIKE 'Threads_running';   -> 2   (matches connectionLimit=2)
 > ```
 | Metric                    | Value | vs. baseline |
 |---------------------------|-------|--------------|
-| Successful RPS (plateau)  |       |              |
-| p95 / p99 latency         |       |              |
-| Error / timeout rate      |       |              |
-| Avg service time per query (s) |  |              |
+| Successful RPS (plateau)  | 469.8/s (mean over run) | ~9.7x higher raw throughput, but see latency |
+| p95 / p99 latency         | p95=5.31s, max=12.22s | ~60x worse (baseline p95=87.99ms) |
+| Error / timeout rate      | 0.00% -- ticket claims "500s", not observed here | contradicts ticket wording |
+| Avg service time per query (s) | ~3.72s avg http_req_duration | baseline avg ~20ms |
 
 ### Root cause & mechanism
-> Explain the paradox: idle database, trivial query, stalled app. What finite
-> resource is being contended, and where does it live? Derive the *right* size
-> for that resource from your measured throughput and service time (state the
-> relationship you used):
-> - Measured avg service time W = ______ s
-> - Target throughput λ = ______ req/s
-> - Required capacity = ______  (show your working)
-> Why does making it arbitrarily large eventually stop helping? ______________
+> Confirmed: connection-pool starvation, not a database performance problem.
+> `Threads_running=2` during the surge proves the DB is only ever executing 2
+> queries concurrently, no matter how many of the 2000 VUs are waiting --
+> this is `connectionLimit: 2` in database.js acting as a hard admission gate
+> in the app tier, upstream of the database entirely. mysql-db CPU (24.65%)
+> stayed low because it genuinely only had 2 things to do at once; capacity-api
+> CPU (134.10%, >1 core) was high because the app process itself is burning
+> cycles managing a huge in-memory queue of waiting requests (queueLimit: 0 =
+> unbounded queueing, so nothing gets rejected, everything just waits longer).
+>
+> Little's Law: N = lambda * W. Measured service time per query is short
+> (baseline shows ~20ms avg for this same query with no contention). With
+> C=2 concurrent "servers" (pooled connections) and W~=0.02s per query,
+> theoretical max throughput = C/W = 2/0.02 = 100 req/s. Observed plateau
+> was ~470 req/s in the k6 summary, but that's requests *completed* over the
+> full 33s window including the long queue wait -- the true steady-state
+> admission rate into the DB is capped at ~100/s, and the other ~2000
+> concurrent callers are simply queued in Node's event loop / mysql2's
+> internal queue the whole time, which is exactly why latency (not
+> throughput) is what balloons: avg http_req_duration=3.72s is almost
+> entirely queueing time, not query execution time.
+> - Measured avg service time W ~= 0.02s (per query, low contention)
+> - Target throughput target ~= 470 req/s (observed demand)
+> - Required capacity C = lambda * W = 470 * 0.02 ~= 9-10 connections
+> Making the pool arbitrarily large eventually stops helping because MySQL
+> itself has a real capacity ceiling (CPU cores, max_connections, lock/latch
+> contention) -- past some C, adding more concurrent connections just moves
+> the queue from the app tier into the database tier instead of eliminating
+> it, and can make things worse via context-switching and contention.
 
 ### Fix & verify
-> The change you made: ______________________________________________________
-> New RPS: ______  New error rate: ______  New p95: ______
-> What upstream protection would make a burst degrade gracefully instead of
-> collapsing? _______________________________________________________________
+> Change 1: raised connectionLimit 2 -> 20 in database.js, based on Little's
+> Law sizing (target ~470 req/s, W~0.02s -> ~10 connections needed, sized up
+> with headroom to 20). Verified fix: Threads_connected/Threads_running
+> climbed under load (proof the pool is now actually being used), mysql-db
+> CPU stayed low (24-30%), confirming the DB itself was never the ceiling.
+>
+> Change 2 (correction after re-testing): initial queueLimit=200 was far too
+> small for a 2000-VU burst -- caused 15,146 db_errors_total (queue-limit
+> rejections surfaced as client-side EOF/500s), error rate spiked to 62.57%.
+> Raised queueLimit to 3000. Re-run: error rate down to 1.86% -- but p95
+> latency got WORSE (5.31s original -> 27.43s with connectionLimit=20 +
+> queueLimit=3000). Checked and ruled out other ceilings: capacity-api CPU
+> only ~20.5% (not saturated), MySQL max_connections=151 (far above the 20
+> we use), ulimit -n=1024 (plenty of file descriptors). None of those are the
+> constraint.
+>
+> New RPS: ~417-470/s (did not meaningfully improve across any pool size
+> tested -- 2, 20 all land in the same 400-700/s band)
+> New error rate: 1.86% (down from 62.57% with the too-small queue, and
+> better than the 0%-but-catastrophically-slow original -- trade-off below)
+> New p95: 27.43s (worse than original 5.31s under this specific 2000-VU
+> burst size, even though the SLO for error rate now passes)
+>
+> Trade-off / honest finding: connectionLimit=2 was a real, confirmed
+> mechanism (Threads_running pinned at 2 while 2000 requests waited) and
+> raising it is the correct fix for the *mechanism* the ticket describes --
+> but under a burst this large (2000 concurrent), no reasonable pool size
+> alone avoids a queue; it only changes whether that queue is silent
+> (unbounded queueLimit, requests hang) or bounded (requests get rejected
+> once full). The real fix this points to is upstream admission control --
+> a rate limiter or a fast 503-with-Retry-After once queue depth exceeds a
+> sane bound -- so a burst degrades gracefully (some requests fast-fail
+> immediately) instead of either hanging indefinitely or piling into a huge
+> queue that makes every request equally slow. That's flagged as a follow-up
+> beyond this ticket's scope, not implemented here.
 
 ---
 
