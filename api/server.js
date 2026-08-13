@@ -18,6 +18,40 @@ const express = require('express');
 const client = require('prom-client');
 const { getPool, getStreamPool, getMongo } = require('./database');
 
+// OPS-2202 P0 follow-up (Rob's review): raising connectionLimit alone fixed
+// the starvation mechanism but couldn't clear the ticket's SLO under a
+// 2000-VU burst -- a bigger pool just let more requests queue, so p95 got
+// WORSE (5.31s -> 27.43s) even with 0 pool starvation. Real fix is
+// admission control: track in-flight DB-bound requests and fail fast with
+// 503 past a bound, instead of letting everyone wait in an ever-growing
+// queue. This trades "a fraction of requests get a fast, clear rejection"
+// for "everyone gets a slow response eventually" -- the standard shed-load
+// pattern for absorbing bursts beyond real capacity.
+// Tightened to match connectionLimit (20) after testing showed 40 let
+// admitted requests still queue behind the pool -- p95 for successful
+// requests stayed at ~29.65s even with admission control active, because
+// the admission cap wasn't actually tied to real serving capacity.
+const MAX_INFLIGHT_DB_REQUESTS = 20;
+let inFlightDbRequests = 0;
+
+function withAdmissionControl(handler) {
+  return async (req, res, next) => {
+    if (inFlightDbRequests >= MAX_INFLIGHT_DB_REQUESTS) {
+      res.set('Retry-After', '1');
+      return res.status(503).json({
+        error: 'SERVICE_OVERLOADED',
+        message: 'Too many in-flight requests, please retry shortly.',
+      });
+    }
+    inFlightDbRequests += 1;
+    try {
+      await handler(req, res, next);
+    } finally {
+      inFlightDbRequests -= 1;
+    }
+  };
+}
+
 const app = express();
 app.use(express.json());
 
@@ -79,7 +113,7 @@ app.get('/metrics', async (_req, res) => {
 // ---------------------------------------------------------------------------
 // Recent patients widget
 // ---------------------------------------------------------------------------
-app.get('/api/patients/recent', async (_req, res) => {
+app.get('/api/patients/recent', withAdmissionControl(async (_req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.query(
@@ -90,7 +124,7 @@ app.get('/api/patients/recent', async (_req, res) => {
     dbErrorsTotal.inc({ route: '/api/patients/recent', code: err.code || 'UNKNOWN' });
     res.status(500).json({ error: err.code || 'ERROR', message: err.message });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Patient lookup by last name
