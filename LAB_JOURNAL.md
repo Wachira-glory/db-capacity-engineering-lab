@@ -505,3 +505,18 @@ Capture the control group you'll compare every incident against.
 > - OPS-2204: alert on `nodejs_heap_size_used_bytes` sustained above ~70% of
 >   the container's memory limit, or on GC pause duration trending upward --
 >   both were visible in the GC log minutes before the actual crash.
+>
+> Cross-cutting coupling: OPS-2201, OPS-2202, and OPS-2203 all share the
+> SAME MySQL connection pool (`connectionLimit` in database.js) -- they
+> aren't three independent incidents, they're three different ways the
+> same shared resource can be exhausted (slow queries holding connections
+> too long, too many callers wanting a connection at once, one connection
+> held hostage by a lock). This has a real consequence: raising
+> connectionLimit to fix OPS-2202 makes MORE concurrent admits possible for
+> OPS-2203's hot-row scenario, which means MORE transactions can queue
+> behind that single row lock at once -- at higher scale, that would surface
+> OPS-2203's ER_LOCK_WAIT_TIMEOUT failures more often, not less, even though
+> connectionLimit is "fixed" from OPS-2202's perspective. The three tickets
+> can't be reasoned about (or capacity-planned) independently; the pool size
+> is a shared budget across all three failure modes at once, and sizing it
+> for one incident's fix can make another incident's exposure worse.
