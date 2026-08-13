@@ -1,0 +1,12 @@
+k6 run load-tests/reproduce-OPS-2203.js -- original, lock held across notifyBedRegistry (~500ms)
+
+THRESHOLDS
+  http_req_duration
+  x 'p(95)<1000' p(95)=57.63s
+  http_req_failed
+  x 'rate<0.05' rate=46.26%
+
+TOTAL RESULTS
+  http_req_duration..............: avg=31s min=753.09ms med=31.87s max=59.68s p(90)=53.36s p(95)=57.63s
+  http_req_failed................: 46.26% 99 out of 214
+  http_reqs......................: 214    3.563569/s

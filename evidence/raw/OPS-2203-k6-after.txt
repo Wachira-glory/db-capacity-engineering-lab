@@ -1,0 +1,15 @@
+k6 run load-tests/reproduce-OPS-2203.js -- guarded atomic UPDATE, notify moved outside lock
+
+THRESHOLDS
+  http_req_duration
+  x 'p(95)<1000' p(95)=2.04s
+  http_req_failed
+  x 'rate<0.05' rate=6.59%
+
+TOTAL RESULTS
+  http_req_duration..............: avg=1.55s min=0s      med=1.61s max=3.07s p(90)=1.96s p(95)=2.04s
+  http_req_failed................: 6.59%  657 out of 9966
+  http_reqs......................: 9966   301.356731/s
+
+Note: remaining errors cluster at t=0 (dense EOF burst when all 500 VUs
+fire near-simultaneously at test start) -- steady-state after that is clean.

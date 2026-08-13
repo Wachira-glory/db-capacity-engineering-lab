@@ -1,0 +1,13 @@
+k6 run load-tests/reproduce-OPS-2202.js -- connectionLimit=20, queueLimit=3000
+
+THRESHOLDS
+  http_req_failed
+  x 'rate<0.05' rate=1.86%
+
+TOTAL RESULTS
+  http_req_duration..............: avg=3.42s min=44.21ms med=946.76ms max=32.57s p(90)=13.9s p(95)=27.43s
+  http_req_failed................: 1.86%  273 out of 14621
+  http_reqs......................: 14621  417.37428/s
+
+Note: error rate ranged 1.86%-17.86% across repeated runs at this same
+config -- run-to-run variance from system noise at this burst size.

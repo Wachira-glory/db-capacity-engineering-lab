@@ -1,0 +1,19 @@
+k6 run load-tests/reproduce-OPS-2202.js -- P0 follow-up, in-process admission control, MAX_INFLIGHT_DB_REQUESTS=20
+
+THRESHOLDS
+  http_req_failed
+  x 'rate<0.05' rate=85.49%
+
+TOTAL RESULTS
+  http_req_duration..............: avg=834.5ms  min=10.36ms med=129.99ms max=32.29s p(90)=288.71ms p(95)=419.02ms
+  { expected_response:true }...: avg=3.82s    min=10.36ms med=306.01ms max=32.29s p(90)=26.44s   p(95)=29.19s
+  http_req_failed................: 85.49% 44225 out of 51728
+  http_reqs......................: 51728  1474.582652/s
+
+docker stats during burst: capacity-api CPU 118.50% -- Node single-thread
+saturated accepting/parsing connections, upstream of admission-control code.
+
+Honest read: overall p95 (incl. fast 503s) dropped 27.43s -> 419ms.
+Successful-request p95 stayed ~29s -- CPU-saturation ceiling, not fixable
+in-process. Real fix needs a reverse proxy / multi-process load shedding
+upstream of Node.

@@ -1,0 +1,10 @@
+k6 run load-tests/reproduce-OPS-2202.js -- original, connectionLimit=2
+
+THRESHOLDS
+  http_req_failed
+  ok 'rate<0.05' rate=0.00%
+
+TOTAL RESULTS
+  http_req_duration..............: avg=3.72s min=9.93ms  med=3.92s max=12.22s p(90)=4.47s p(95)=5.31s
+  http_req_failed................: 0.00%  0 out of 15645
+  http_reqs......................: 15645  469.804522/s

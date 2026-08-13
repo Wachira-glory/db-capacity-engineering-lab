@@ -1,0 +1,11 @@
+SHOW INDEX FROM patients;
++----------+------------+------------------------+--------------+-------------+
+| Table    | Non_unique | Key_name               | Seq_in_index | Column_name |
++----------+------------+------------------------+--------------+-------------+
+| patients |          0 | PRIMARY                |            1 | id          |
+| patients |          1 | idx_patients_last_name |            1 | last_name   |
++----------+------------+------------------------+--------------+-------------+
+
+EXPLAIN ANALYZE SELECT * FROM patients WHERE last_name = 'Smith';
+
+-> Index lookup on patients using idx_patients_last_name (last_name='Smith')  (cost=2371 rows=10000) (actual time=0.0475..73.5 rows=10000 loops=1)

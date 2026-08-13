@@ -1,0 +1,13 @@
+k6 run load-tests/reproduce-OPS-2201.js -- first broken run
+
+THRESHOLDS
+  http_req_duration
+  x 'p(95)<300' p(95)=32.42s
+
+TOTAL RESULTS
+  checks_total.......: 408     6.912896/s
+  checks_succeeded...: 100.00% 408 out of 408
+  http_req_duration..............: avg=21.78s min=540.35ms med=27.3s max=35.97s p(90)=29.74s p(95)=32.42s
+  http_req_failed................: 0.00%  0 out of 408
+  http_reqs......................: 408    6.912896/s
+  data_received..................: 1.5 GB 25 MB/s

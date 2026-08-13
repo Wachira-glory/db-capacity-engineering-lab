@@ -1,0 +1,4 @@
+EXPLAIN ANALYZE SELECT * FROM patients WHERE last_name = 'Smith';
+
+-> Filter: (patients.last_name = 'Smith')  (cost=10294 rows=9837) (actual time=0.194..170 rows=10000 loops=1)
+    -> Table scan on patients  (cost=10294 rows=98373) (actual time=0.123..146 rows=100000 loops=1)

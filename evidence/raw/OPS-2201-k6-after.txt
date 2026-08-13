@@ -1,0 +1,13 @@
+k6 run load-tests/reproduce-OPS-2201.js -- after index + LIMIT 100
+
+THRESHOLDS
+  http_req_duration
+  x 'p(95)<300' p(95)=722.75ms
+
+TOTAL RESULTS
+  checks_total.......: 10464   343.692978/s
+  checks_succeeded...: 100.00% 10464 out of 10464
+  http_req_duration..............: avg=576.41ms min=29.97ms med=557.74ms max=2s p(90)=669.21ms p(95)=722.75ms
+  http_req_failed................: 0.00%  0 out of 10464
+  http_reqs......................: 10464  343.692978/s
+  data_received..................: 367 MB 12 MB/s

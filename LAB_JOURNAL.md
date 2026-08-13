@@ -80,6 +80,9 @@ Capture the control group you'll compare every incident against.
 > search reads all ~100,000 rows -- cheap once, expensive under concurrency.
 
 ### Observation (evidence)
+> Raw runs: `evidence/raw/OPS-2201-explain-before.txt`,
+> `evidence/raw/OPS-2201-explain-after.txt`, `evidence/raw/OPS-2201-k6-before.txt`,
+> `evidence/raw/OPS-2201-k6-after.txt`.
 > Investigate how the database executes the search. Paste what you find:
 > ```
 > EXPLAIN ANALYZE SELECT * FROM patients WHERE last_name = 'Smith';
@@ -163,6 +166,9 @@ Capture the control group you'll compare every incident against.
 > (it's only ever running <=2 queries) while the app appears frozen.
 
 ### Observation (evidence)
+> Raw runs: `evidence/raw/OPS-2202-threads-during-load.txt`,
+> `evidence/raw/OPS-2202-k6-before.txt`, `evidence/raw/OPS-2202-k6-after-pool-only.txt`,
+> `evidence/raw/OPS-2202-k6-after-admission-control.txt`.
 > Where is time spent between request arrival and query execution? Capture the
 > error codes and any queue/timeout evidence from logs and metrics:
 > ```
@@ -260,6 +266,8 @@ Capture the control group you'll compare every incident against.
 > and the failure will show up as ______ (a DB error? a timeout? a stall?) ___.
 
 ### Observation (evidence)
+> Raw runs: `evidence/raw/OPS-2203-data-locks.txt`,
+> `evidence/raw/OPS-2203-k6-before.txt`, `evidence/raw/OPS-2203-k6-after.txt`.
 > While the reproduction runs, inspect concurrent writers to one row:
 > ```sql
 > SELECT * FROM performance_schema.data_locks\G
@@ -352,6 +360,8 @@ Capture the control group you'll compare every incident against.
 > so the kernel OOM-kills the process instead of V8 gracefully GCing first.
 
 ### Observation (evidence)
+> Raw runs: `evidence/raw/OPS-2204-gc-log-crash.txt`,
+> `evidence/raw/OPS-2204-k6-after.txt`.
 > Watch `nodejs_heap_size_used_bytes`, GC pauses, and restarts:
 > ```bash
 > docker stats

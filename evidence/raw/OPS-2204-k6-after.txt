@@ -1,0 +1,14 @@
+k6 run load-tests/reproduce-OPS-2204.js -- dedicated callback stream pool + backpressure + res.on('close') cleanup
+
+THRESHOLDS
+  http_req_failed
+  ok 'rate<0.05' rate=0.00%
+
+TOTAL RESULTS
+  checks_succeeded...: 100.00% 95 out of 95
+  http_req_duration..............: avg=59.66s min=6.05s med=1m13s max=1m23s p(90)=1m20s p(95)=1m21s
+  http_req_failed................: 0.00%  0 out of 95
+  data_received..................: 3.5 GB 24 MB/s
+
+RestartCount after test: 0 (from 1-2 depending on run, pre-fix)
+docker stats during run: capacity-api memory flat 66-80MB (never approached 160MB limit)

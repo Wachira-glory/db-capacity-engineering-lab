@@ -1,0 +1,9 @@
+SHOW STATUS LIKE 'Threads_connected'; SHOW STATUS LIKE 'Threads_running';
+-- captured during 2000-VU surge, connectionLimit=2
+
+Threads_connected: 3
+Threads_running: 2   -- pinned at connectionLimit despite 2000 waiting VUs
+
+docker stats during surge:
+  mysql-db      CPU 24.65%   MEM 410MiB/7.61GiB
+  capacity-api  CPU 134.10%  MEM 96.24MiB/160MiB

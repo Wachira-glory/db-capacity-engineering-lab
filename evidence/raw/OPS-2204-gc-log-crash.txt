@@ -1,0 +1,9 @@
+docker compose logs capacity-api -- FATAL heap OOM, pre-fix
+
+[1:0x677c130]   746775 ms: Mark-Compact (reduce) 253.8 (258.7) -> 253.1 (259.0) MB, 23538.07 / 0.00 ms  allocation failure; scavenge might not succeed
+[1:0x677c130]   766504 ms: Mark-Compact (reduce) 254.2 (259.0) -> 253.9 (260.0) MB, 19701.19 / 0.00 ms  allocation failure; scavenge might not succeed
+
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+
+RestartCount after crash: 1
+Container mem_limit: 160MB, NODE_OPTIONS --max-old-space-size=256 (mismatch)
