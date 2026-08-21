@@ -1,0 +1,9 @@
+[0m[1mdata.aws_subnets.default: Reading...[0m[0m
+[0m[1maws_security_group.app: Refreshing state... [id=sg-24fddf39c1e789eba][0m
+[0m[1mdata.aws_subnets.default: Read complete after 0s [id=eu-west-3][0m
+[0m[1maws_instance.app: Refreshing state... [id=i-134e7c071ba37ebdb][0m
+
+[0m[1m[32mNo changes.[0m[1m Your infrastructure matches the configuration.[0m
+
+[0mTerraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.

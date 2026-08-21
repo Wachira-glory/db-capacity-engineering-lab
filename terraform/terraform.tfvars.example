@@ -1,0 +1,5 @@
+db_host     = "mysql-81b8c54-wachiraglorywairimu-4d3d.l.aivencloud.com"
+db_port     = 18676
+db_username = "avnadmin"
+db_password = "PASTE_YOUR_ACTUAL_PASSWORD_HERE"
+db_name     = "capacity_lab"

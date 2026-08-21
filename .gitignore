@@ -20,3 +20,14 @@ Thumbs.db
 # Logs / test output
 *.log
 load-tests/results/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Assignment 2 evidence bundle: keep logs under evidence/ tracked even
+# though *.log is ignored above
+!evidence/**/*.log
