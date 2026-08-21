@@ -1,0 +1,10 @@
+>> Waiting for MySQL at mysql-81b8c54-wachiraglorywairimu-4d3d.l.aivencloud.com:18676 ...
+>> MySQL is up.
+>> Creating schema and loading 100000 patient rows (this may take a minute) ...
+mysql: [Warning] Using a password on the command line interface can be insecure.
+WARNING: no verification of server certificate will be done. Use --ssl-mode=VERIFY_CA or VERIFY_IDENTITY.
+seeded
+patients rows: 100000
+seeded
+hospitals rows: 5
+>> Seed complete.

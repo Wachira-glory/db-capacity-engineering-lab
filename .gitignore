@@ -28,6 +28,6 @@ load-tests/results/
 *.tfvars
 !*.tfvars.example
 
-# Assignment 2 evidence bundle: keep logs under evidence/ tracked even
-# though *.log is ignored above
+# Assignment 2 evidence bundle: always track logs under evidence/, even
+# though *.log is ignored elsewhere (npm/yarn debug logs, etc.)
 !evidence/**/*.log

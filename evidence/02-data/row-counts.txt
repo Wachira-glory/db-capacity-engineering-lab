@@ -1,0 +1,3 @@
+table_name	row_count
+patients	100000
+hospitals	5
