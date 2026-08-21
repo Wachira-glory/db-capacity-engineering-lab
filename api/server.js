@@ -17,6 +17,7 @@
 const express = require('express');
 const client = require('prom-client');
 const { getPool, getStreamPool, getMongo } = require('./database');
+const { loadDbCredentials, getSecretSource } = require('./secrets');
 
 // OPS-2202 P0 follow-up (Rob's review): raising connectionLimit alone fixed
 // the starvation mechanism but couldn't clear the ticket's SLO under a
@@ -272,9 +273,53 @@ app.get('/api/audit/ping', async (_req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Health checks
+// ---------------------------------------------------------------------------
+// /healthz: is the process alive at all. No dependency checks -- if this
+// route can respond, the process is up.
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// /readyz: can the app actually serve traffic right now -- specifically, can
+// it reach the database. This is what nginx/the load balancer should use to
+// decide whether to route traffic to this instance.
+app.get('/readyz', async (_req, res) => {
+  try {
+    const pool = getPool();
+    await pool.query('SELECT 1');
+    res.status(200).json({ status: 'ready' });
+  } catch (err) {
+    res.status(503).json({ status: 'not_ready', error: err.code || 'DB_UNREACHABLE' });
+  }
+});
+
+// Exposes which secret ARN/version is in use -- never the secret value.
+app.get('/debug/secret-source', (_req, res) => {
+  res.json(getSecretSource());
+});
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-app.listen(PORT, () => {
+async function start() {
+  // Resolve DB credentials from Secrets Manager (or env-var fallback) before
+  // populating the env vars database.js reads when it creates its pool.
+  const creds = await loadDbCredentials();
+  process.env.MYSQL_HOST = creds.host;
+  process.env.MYSQL_PORT = String(creds.port);
+  process.env.MYSQL_USER = creds.username;
+  process.env.MYSQL_PASSWORD = creds.password;
+  process.env.MYSQL_DATABASE = creds.dbname;
+
+  app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`capacity-api listening on :${PORT} (metrics at /metrics)`);
+  });
+}
+
+start().catch((err) => {
   // eslint-disable-next-line no-console
-  console.log(`capacity-api listening on :${PORT} (metrics at /metrics)`);
+  console.error('Fatal error during boot:', err);
+  process.exit(1);
 });

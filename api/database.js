@@ -13,7 +13,12 @@ const { MongoClient } = require('mongodb');
 // ---------------------------------------------------------------------------
 // Environment configuration (with defaults for local runs)
 // ---------------------------------------------------------------------------
-const MYSQL_CONFIG = {
+// Built lazily via getMysqlConfig(), not at module-load time: secrets.js
+// sets process.env.MYSQL_* during boot AFTER this module is first required,
+// so a plain object here would capture the stale defaults instead of the
+// real, resolved credentials.
+function getMysqlConfig() {
+  return {
   host: process.env.MYSQL_HOST || 'mysql-db',
   port: Number(process.env.MYSQL_PORT || 3306),
   user: process.env.MYSQL_USER || 'root',
@@ -50,7 +55,16 @@ const MYSQL_CONFIG = {
   maxIdle: 2,
   idleTimeout: 60_000,
   enableKeepAlive: true,
-};
+
+  // Assignment 2: Aiven requires TLS. rejectUnauthorized: false since we're
+  // not pinning Aiven's CA cert here -- fine for this lab, a production
+  // setup would supply the real CA bundle instead.
+  ssl:
+    process.env.MYSQL_HOST && process.env.MYSQL_HOST.includes('aivencloud.com')
+      ? { rejectUnauthorized: false }
+      : undefined,
+  };
+}
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo-db:27017';
 const MONGO_DB_NAME = process.env.MONGO_DB || 'capacity_lab';
@@ -62,7 +76,7 @@ let pool;
 
 function getPool() {
   if (!pool) {
-    pool = mysql.createPool(MYSQL_CONFIG);
+    pool = mysql.createPool(getMysqlConfig());
   }
   return pool;
 }
@@ -75,7 +89,7 @@ let streamPool;
 
 function getStreamPool() {
   if (!streamPool) {
-    streamPool = mysqlCallback.createPool({ ...MYSQL_CONFIG, connectionLimit: 5 });
+    streamPool = mysqlCallback.createPool({ ...getMysqlConfig(), connectionLimit: 5 });
   }
   return streamPool;
 }
@@ -114,7 +128,7 @@ async function closeAll() {
 }
 
 module.exports = {
-  MYSQL_CONFIG,
+  getMysqlConfig,
   MONGO_URI,
   MONGO_DB_NAME,
   getPool,
