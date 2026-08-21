@@ -1,3 +1,11 @@
+[33m╷[0m[0m
+[33m│[0m [0m[1m[33mWarning: [0m[0m[1mDeprecated Parameter[0m
+[33m│[0m [0m
+[33m│[0m [0m[0mThe parameter "dynamodb_table" is deprecated. Use parameter "use_lockfile"
+[33m│[0m [0minstead.
+[33m╵[0m[0m
+[0m[1mmodule.service.data.aws_subnets.default: Reading...[0m[0m
+[0m[1mmodule.service.data.aws_subnets.default: Read complete after 1s [id=eu-west-3][0m
 
 Terraform used the selected providers to generate the following execution
 plan. Resource actions are indicated with the following symbols:
@@ -5,7 +13,7 @@ plan. Resource actions are indicated with the following symbols:
 
 Terraform will perform the following actions:
 
-[1m  # aws_secretsmanager_secret.db[0m will be created
+[1m  # module.data.aws_secretsmanager_secret.db[0m will be created
 [0m  [32m+[0m[0m resource "aws_secretsmanager_secret" "db" {
       [32m+[0m[0m arn                            = (known after apply)
       [32m+[0m[0m force_overwrite_replica_secret = false
@@ -20,7 +28,7 @@ Terraform will perform the following actions:
       [32m+[0m[0m replica (known after apply)
     }
 
-[1m  # aws_secretsmanager_secret_version.db[0m will be created
+[1m  # module.data.aws_secretsmanager_secret_version.db[0m will be created
 [0m  [32m+[0m[0m resource "aws_secretsmanager_secret_version" "db" {
       [32m+[0m[0m arn                  = (known after apply)
       [32m+[0m[0m has_secret_string_wo = (known after apply)
@@ -34,36 +42,7 @@ Terraform will perform the following actions:
       [32m+[0m[0m version_stages       = (known after apply)
     }
 
-[1mPlan:[0m [0m2 to add, 0 to change, 0 to destroy.
-
-Changes to Outputs:
-  [32m+[0m[0m db_endpoint = "mysql-81b8c54-wachiraglorywairimu-4d3d.l.aivencloud.com"
-  [32m+[0m[0m db_port     = 18676
-  [32m+[0m[0m secret_arn  = (known after apply)
-  [32m+[0m[0m secret_name = "regional-health/db"
-[0m[1maws_secretsmanager_secret.db: Creating...[0m[0m
-[0m[1maws_secretsmanager_secret.db: Creation complete after 0s [id=arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-ugIKyN][0m
-[0m[1maws_secretsmanager_secret_version.db: Creating...[0m[0m
-[0m[1maws_secretsmanager_secret_version.db: Creation complete after 0s [id=arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-ugIKyN|terraform-9IKdSyQUFfCvIKscohGfyS7nLH][0m
-[0m[1m[32m
-Apply complete! Resources: 2 added, 0 changed, 0 destroyed.[0m
-[0m[1m[32m
-Outputs:
-
-[0mdb_endpoint = "mysql-81b8c54-wachiraglorywairimu-4d3d.l.aivencloud.com"
-db_port = 18676
-secret_arn = "arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-ugIKyN"
-secret_name = "regional-health/db"
-[0m[1mdata.aws_subnets.default: Reading...[0m[0m
-[0m[1mdata.aws_subnets.default: Read complete after 0s [id=eu-west-3][0m
-
-Terraform used the selected providers to generate the following execution
-plan. Resource actions are indicated with the following symbols:
-  [32m+[0m create[0m
-
-Terraform will perform the following actions:
-
-[1m  # aws_instance.app[0m will be created
+[1m  # module.service.aws_instance.app[0m will be created
 [0m  [32m+[0m[0m resource "aws_instance" "app" {
       [32m+[0m[0m ami                                  = "ami-df5de72bdb3b"
       [32m+[0m[0m arn                                  = (known after apply)
@@ -110,51 +89,7 @@ Terraform will perform the following actions:
           [32m+[0m[0m "Name" = "regional-health-app"
         }
       [32m+[0m[0m tenancy                              = (known after apply)
-      [32m+[0m[0m user_data                            = <<-EOT
-            #!/bin/bash
-            set -euo pipefail
-            
-            # --- Docker ---
-            if ! command -v docker &> /dev/null; then
-              curl -fsSL https://get.docker.com | sh
-              systemctl enable docker
-              systemctl start docker
-            fi
-            
-            # --- App container ---
-            # Only the secret ARN is passed in -- never the secret value itself.
-            docker run -d --name capacity-api --restart unless-stopped \
-              --memory="512m" \
-              -e AWS_ENDPOINT_URL="http://localhost.localstack.cloud:4566" \
-              -e DB_SECRET_ARN="arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-ZXBRZb" \
-              -p 3000:3000 \
-              capacity-api:latest
-            
-            # --- nginx reverse proxy ---
-            apt-get update -y && apt-get install -y nginx
-            cat > /etc/nginx/sites-available/default << NGINX
-            upstream app_upstream {
-                server 127.0.0.1:3000;
-            }
-            server {
-                listen 80;
-            
-                location /readyz {
-                    proxy_pass http://app_upstream/readyz;
-                    proxy_next_upstream error timeout http_502 http_503;
-                }
-                location /healthz {
-                    proxy_pass http://app_upstream/healthz;
-                }
-                location / {
-                    proxy_pass http://app_upstream;
-                    # Don't route real traffic to an instance whose /readyz is failing.
-                    proxy_next_upstream error timeout http_503;
-                }
-            }
-            NGINX
-            systemctl restart nginx
-        EOT
+      [32m+[0m[0m user_data                            = (known after apply)
       [32m+[0m[0m user_data_base64                     = (known after apply)
       [32m+[0m[0m user_data_replace_on_change          = false
       [32m+[0m[0m vpc_security_group_ids               = (known after apply)
@@ -186,47 +121,7 @@ Terraform will perform the following actions:
       [32m+[0m[0m secondary_network_interface (known after apply)
     }
 
-[1m  # aws_lb.app[0m will be created
-[0m  [32m+[0m[0m resource "aws_lb" "app" {
-      [32m+[0m[0m arn                                                          = (known after apply)
-      [32m+[0m[0m arn_suffix                                                   = (known after apply)
-      [32m+[0m[0m client_keep_alive                                            = 3600
-      [32m+[0m[0m desync_mitigation_mode                                       = "defensive"
-      [32m+[0m[0m dns_name                                                     = (known after apply)
-      [32m+[0m[0m drop_invalid_header_fields                                   = false
-      [32m+[0m[0m enable_deletion_protection                                   = false
-      [32m+[0m[0m enable_http2                                                 = true
-      [32m+[0m[0m enable_prefix_for_ipv6_source_nat                            = (known after apply)
-      [32m+[0m[0m enable_tls_version_and_cipher_suite_headers                  = false
-      [32m+[0m[0m enable_waf_fail_open                                         = false
-      [32m+[0m[0m enable_xff_client_port                                       = false
-      [32m+[0m[0m enable_zonal_shift                                           = false
-      [32m+[0m[0m enforce_security_group_inbound_rules_on_private_link_traffic = (known after apply)
-      [32m+[0m[0m id                                                           = (known after apply)
-      [32m+[0m[0m idle_timeout                                                 = 60
-      [32m+[0m[0m internal                                                     = false
-      [32m+[0m[0m ip_address_type                                              = (known after apply)
-      [32m+[0m[0m load_balancer_type                                           = "application"
-      [32m+[0m[0m name                                                         = "regional-health-alb"
-      [32m+[0m[0m name_prefix                                                  = (known after apply)
-      [32m+[0m[0m preserve_host_header                                         = false
-      [32m+[0m[0m region                                                       = "eu-west-3"
-      [32m+[0m[0m secondary_ips_auto_assigned_per_subnet                       = (known after apply)
-      [32m+[0m[0m security_groups                                              = (known after apply)
-      [32m+[0m[0m subnets                                                      = [
-          [32m+[0m[0m "subnet-07a4a20a0e727911d",
-          [32m+[0m[0m "subnet-29f58a64524708dca",
-          [32m+[0m[0m "subnet-cd73dbd6776d12e8b",
-        ]
-      [32m+[0m[0m tags_all                                                     = (known after apply)
-      [32m+[0m[0m vpc_id                                                       = (known after apply)
-      [32m+[0m[0m xff_header_processing_mode                                   = "append"
-      [32m+[0m[0m zone_id                                                      = (known after apply)
-
-      [32m+[0m[0m subnet_mapping (known after apply)
-    }
-
-[1m  # aws_security_group.app[0m will be created
+[1m  # module.service.aws_security_group.app[0m will be created
 [0m  [32m+[0m[0m resource "aws_security_group" "app" {
       [32m+[0m[0m arn                    = (known after apply)
       [32m+[0m[0m description            = "Allow inbound HTTP to nginx"
@@ -270,44 +165,28 @@ Terraform will perform the following actions:
       [32m+[0m[0m vpc_id                 = (known after apply)
     }
 
-[1mPlan:[0m [0m3 to add, 0 to change, 0 to destroy.
+[1mPlan:[0m [0m4 to add, 0 to change, 0 to destroy.
 
 Changes to Outputs:
   [32m+[0m[0m instance_id = (known after apply)
   [32m+[0m[0m nginx_port  = 80
   [32m+[0m[0m public_ip   = (known after apply)
-[0m[1maws_security_group.app: Creating...[0m[0m
-[0m[1maws_security_group.app: Creation complete after 1s [id=sg-24fddf39c1e789eba][0m
-[0m[1maws_lb.app: Creating...[0m[0m
-[0m[1maws_instance.app: Creating...[0m[0m
-[0m[1maws_lb.app: Still creating... [00m10s elapsed][0m[0m
-[0m[1maws_instance.app: Still creating... [00m10s elapsed][0m[0m
-[0m[1maws_instance.app: Creation complete after 11s [id=i-134e7c071ba37ebdb][0m
-[0m[1maws_lb.app: Still creating... [00m20s elapsed][0m[0m
-[0m[1maws_lb.app: Still creating... [00m30s elapsed][0m[0m
-[0m[1maws_lb.app: Still creating... [00m40s elapsed][0m[0m
-[31m╷[0m[0m
-[31m│[0m [0m[1m[31mError: [0m[0m[1mreading ELBv2 Load Balancer (regional-health-alb): operation error Elastic Load Balancing v2: DescribeLoadBalancers, https response error StatusCode: 501, RequestID: a8e93385-579b-40d3-b2e3-a0947861e3d9, api error InternalFailure: Sorry, the elbv2 service is not included within your LocalStack license, but is available in an upgraded license. Please refer to https://docs.localstack.cloud/references/coverage for more details.[0m
-[31m│[0m [0m
-[31m│[0m [0m[0m  with aws_lb.app,
-[31m│[0m [0m  on main.tf line 56, in resource "aws_lb" "app":
-[31m│[0m [0m  56: resource "aws_lb" "app" [4m{[0m[0m
-[31m│[0m [0m
-[31m╵[0m[0m
-[0m[1mdata.aws_subnets.default: Reading...[0m[0m
-[0m[1maws_security_group.app: Refreshing state... [id=sg-24fddf39c1e789eba][0m
-[0m[1mdata.aws_subnets.default: Read complete after 0s [id=eu-west-3][0m
-[0m[1maws_instance.app: Refreshing state... [id=i-134e7c071ba37ebdb][0m
-
-[0m[1m[32mNo changes.[0m[1m Your infrastructure matches the configuration.[0m
-
-[0mTerraform has compared your real infrastructure against your configuration
-and found no differences, so no changes are needed.
+  [32m+[0m[0m secret_arn  = (known after apply)
+[0m[1mmodule.data.aws_secretsmanager_secret.db: Creating...[0m[0m
+[0m[1mmodule.service.aws_security_group.app: Creating...[0m[0m
+[0m[1mmodule.data.aws_secretsmanager_secret.db: Creation complete after 0s [id=arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-pqqTKm][0m
+[0m[1mmodule.data.aws_secretsmanager_secret_version.db: Creating...[0m[0m
+[0m[1mmodule.data.aws_secretsmanager_secret_version.db: Creation complete after 0s [id=arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-pqqTKm|terraform-oks7w2l97AM1SHt1XAiTLEkLQx][0m
+[0m[1mmodule.service.aws_security_group.app: Creation complete after 0s [id=sg-6427f60fb34c8d7b8][0m
+[0m[1mmodule.service.aws_instance.app: Creating...[0m[0m
+[0m[1mmodule.service.aws_instance.app: Still creating... [00m10s elapsed][0m[0m
+[0m[1mmodule.service.aws_instance.app: Creation complete after 11s [id=i-4785014dbab1bf95e][0m
 [0m[1m[32m
-Apply complete! Resources: 0 added, 0 changed, 0 destroyed.[0m
+Apply complete! Resources: 4 added, 0 changed, 0 destroyed.[0m
 [0m[1m[32m
 Outputs:
 
-[0minstance_id = "i-134e7c071ba37ebdb"
+[0minstance_id = "i-4785014dbab1bf95e"
 nginx_port = 80
-public_ip = "54.214.54.57"
+public_ip = "54.214.7.14"
+secret_arn = "arn:aws:secretsmanager:eu-west-3:000000000000:secret:regional-health/db-pqqTKm"

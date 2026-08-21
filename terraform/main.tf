@@ -4,7 +4,7 @@
 # =============================================================================
 
 module "data" {
-  source = "../../regional-health-platform/modules/data"
+  source = "../../../regional-health-platform/modules/data"
 
   db_host     = var.db_host
   db_port     = var.db_port
@@ -14,6 +14,6 @@ module "data" {
 }
 
 module "service" {
-  source     = "../../regional-health-platform/modules/service"
+  source     = "../../../regional-health-platform/modules/service"
   secret_arn = module.data.secret_arn
 }
